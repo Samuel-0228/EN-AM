@@ -1,53 +1,59 @@
 import os
+import asyncio
 from flask import Flask, request
 from telegram import Update
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 from deep_translator import GoogleTranslator
 
-# Load environment variables
 TOKEN = os.environ.get("BOT_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
 app = Flask(__name__)
 
-# Create Telegram Application
-application = Application.builder().token(TOKEN).build()
+# Build Telegram Application (NO polling)
+application = ApplicationBuilder().token(TOKEN).build()
 
-# Translate incoming messages
+# Message handler
 
 
 async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message and update.message.text:
-        user_text = update.message.text
-
         try:
             translated = GoogleTranslator(
-                source='auto', target='en').translate(user_text)
+                source="auto",
+                target="en"
+            ).translate(update.message.text)
+
             await update.message.reply_text(translated)
-        except Exception as e:
+
+        except Exception:
             await update.message.reply_text("Translation error occurred.")
 
 # Add handler
-application.add_handler(MessageHandler(
-    filters.TEXT & ~filters.COMMAND, translate_message))
+application.add_handler(
+    MessageHandler(filters.TEXT & ~filters.COMMAND, translate_message)
+)
+
+# Health check route
 
 
-@app.route("/", methods=["GET"])
+@app.route("/")
 def home():
     return "Bot is running!"
 
+# Webhook route
+
 
 @app.route(f"/{TOKEN}", methods=["POST"])
-async def webhook():
-    data = request.get_json()
-    update = Update.de_json(data, application.bot)
-    await application.process_update(update)
+def telegram_webhook():
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    asyncio.run(application.process_update(update))
     return "OK"
 
 
 # Set webhook when app starts
 @app.before_first_request
-def setup_webhook():
+def set_webhook():
     application.bot.set_webhook(f"{WEBHOOK_URL}/{TOKEN}")
 
 

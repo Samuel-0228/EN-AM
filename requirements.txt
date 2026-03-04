@@ -1,4 +1,4 @@
-flask
+flask==3.0.3
 python-telegram-bot==20.7
-deep-translator
-gunicorn
+deep-translator==1.11.4
+gunicorn==21.2.0
