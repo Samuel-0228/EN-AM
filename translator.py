@@ -1,58 +1,73 @@
 import os
-import asyncio
-from flask import Flask, request
-from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
+import requests
+from flask import Flask, request, jsonify
 from deep_translator import GoogleTranslator
 
-TOKEN = os.getenv("BOT_TOKEN")
+# Environment variables
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-if not TOKEN:
+if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN is not set")
 
 if not WEBHOOK_URL:
     raise ValueError("WEBHOOK_URL is not set")
 
+TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
 app = Flask(__name__)
 
-application = ApplicationBuilder().token(TOKEN).build()
+# Home route (health check)
 
 
-async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message and update.message.text:
-        try:
-            translated = GoogleTranslator(
-                source="auto",
-                target="en"
-            ).translate(update.message.text)
-
-            await update.message.reply_text(translated)
-
-        except Exception:
-            await update.message.reply_text("Translation error occurred.")
-
-application.add_handler(
-    MessageHandler(filters.TEXT & ~filters.COMMAND, translate_message)
-)
-
-
-@app.route("/")
+@app.route("/", methods=["GET"])
 def home():
-    return "Bot is running!"
+    return "Bot is running!", 200
+
+# Webhook endpoint
 
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    asyncio.run(application.process_update(update))
-    return "OK"
+    data = request.get_json()
+
+    if not data:
+        return jsonify({"status": "no data"}), 400
+
+    message = data.get("message")
+
+    if message and "text" in message:
+        chat_id = message["chat"]["id"]
+        user_text = message["text"]
+
+        try:
+            translated = GoogleTranslator(
+                source="auto",
+                target="en"
+            ).translate(user_text)
+
+        except Exception:
+            translated = "Translation error occurred."
+
+        # Send reply back to Telegram
+        requests.post(
+            f"{TELEGRAM_API}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": translated
+            }
+        )
+
+    return jsonify({"status": "ok"}), 200
 
 
+# Set webhook automatically on startup
 @app.before_first_request
-def setup():
-    asyncio.run(application.initialize())
-    asyncio.run(application.bot.set_webhook(f"{WEBHOOK_URL}/webhook"))
+def set_webhook():
+    requests.post(
+        f"{TELEGRAM_API}/setWebhook",
+        json={"url": f"{WEBHOOK_URL}/webhook"}
+    )
 
 
 if __name__ == "__main__":
