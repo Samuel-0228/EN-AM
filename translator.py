@@ -3,7 +3,6 @@ import requests
 from flask import Flask, request, jsonify
 from deep_translator import GoogleTranslator
 
-# Environment variables
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
@@ -17,14 +16,37 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 app = Flask(__name__)
 
-# Home route (health check)
+# ------------------------
+# Set webhook immediately on startup
+# ------------------------
+
+
+def register_webhook():
+    try:
+        requests.post(
+            f"{TELEGRAM_API}/setWebhook",
+            json={"url": f"{WEBHOOK_URL}/webhook"},
+            timeout=10
+        )
+        print("Webhook registered successfully.")
+    except Exception as e:
+        print("Webhook registration failed:", e)
+
+
+register_webhook()
+
+# ------------------------
+# Health check route
+# ------------------------
 
 
 @app.route("/", methods=["GET"])
 def home():
     return "Bot is running!", 200
 
-# Webhook endpoint
+# ------------------------
+# Telegram webhook endpoint
+# ------------------------
 
 
 @app.route("/webhook", methods=["POST"])
@@ -45,29 +67,22 @@ def webhook():
                 source="auto",
                 target="en"
             ).translate(user_text)
-
         except Exception:
             translated = "Translation error occurred."
 
-        # Send reply back to Telegram
-        requests.post(
-            f"{TELEGRAM_API}/sendMessage",
-            json={
-                "chat_id": chat_id,
-                "text": translated
-            }
-        )
+        try:
+            requests.post(
+                f"{TELEGRAM_API}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": translated
+                },
+                timeout=10
+            )
+        except Exception as e:
+            print("Failed to send message:", e)
 
     return jsonify({"status": "ok"}), 200
-
-
-# Set webhook automatically on startup
-@app.before_first_request
-def set_webhook():
-    requests.post(
-        f"{TELEGRAM_API}/setWebhook",
-        json={"url": f"{WEBHOOK_URL}/webhook"}
-    )
 
 
 if __name__ == "__main__":
