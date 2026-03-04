@@ -62,20 +62,25 @@ def webhook():
         chat_id = message["chat"]["id"]
         user_text = message["text"]
 
-        try:
-            translated = GoogleTranslator(
-                source="auto",
-                target="en"
-            ).translate(user_text)
-        except Exception:
-            translated = "Translation error occurred."
+        # Handle /start or any command
+        if user_text.startswith("/"):
+            reply = "Send me any message and I will translate it to English."
+        else:
+            try:
+                translated = GoogleTranslator(
+                    source="auto",
+                    target="en"
+                ).translate(user_text)
+                reply = f"Translated:\n{translated}"
+            except Exception:
+                reply = "Translation error occurred."
 
         try:
             requests.post(
                 f"{TELEGRAM_API}/sendMessage",
                 json={
                     "chat_id": chat_id,
-                    "text": translated
+                    "text": reply
                 },
                 timeout=10
             )
