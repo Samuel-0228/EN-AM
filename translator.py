@@ -64,14 +64,16 @@ def webhook():
 
         # Handle /start or any command
         if user_text.startswith("/"):
-            reply = "Send me any message and I will translate it to English."
+            reply = "Send me any message and I will translate it to Amharic."
         else:
             try:
                 translated = GoogleTranslator(
                     source="auto",
-                    target="en"
+                    target="am"   # 🔥 Changed to Amharic
                 ).translate(user_text)
-                reply = f"Translated:\n{translated}"
+
+                reply = f"Translated to Amharic:\n{translated}"
+
             except Exception:
                 reply = "Translation error occurred."
 
