@@ -1,49 +1,47 @@
 import logging
-import inspect
+import os
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
 from telegram import Update
 from telegram.ext import (
     Application,
+    ApplicationBuilder,
     CommandHandler,
     MessageHandler,
     ContextTypes,
     filters,
 )
-from dotenv import load_dotenv
-try:
-    from googletrans import Translator
-except ImportError:
-    Translator = None
-    import logging
-    logging.error(
-        "googletrans module is not installed. Please install it with 'pip install googletrans==4.0.0-rc1'")
-import os
+from googletrans import Translator
 
+# ----------------- Logging -----------------
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
-logging.getLogger("httpx").setLevel(logging.WARNING)
 
-load_dotenv()
+# ----------------- Config -----------------
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # set in Render
+# e.g. https://your-service.onrender.com/webhook
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN environment variable is not set.")
+if not WEBHOOK_URL:
+    raise RuntimeError("WEBHOOK_URL environment variable is not set.")
 
-if Translator:
-    translator = Translator()
-else:
-    translator = None
+translator = Translator()
 
-# Read token from environment variable (safer for Render)
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-PORT = int(os.getenv("PORT", "10000"))
-WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "telegram")
-RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
-PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL") or RENDER_EXTERNAL_URL
-WEBHOOK_URL = (
-    f"{PUBLIC_BASE_URL.rstrip('/')}/{WEBHOOK_PATH}"
-    if PUBLIC_BASE_URL
-    else None
+# ----------------- Telegram Application -----------------
+application: Application = (
+    ApplicationBuilder()
+    .token(BOT_TOKEN)
+    .build()
 )
+
+# ---------- Handlers ----------
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -77,16 +75,8 @@ async def translate_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if english_text.startswith("/"):
         return
 
-    if not translator:
-        await update.message.reply_text(
-            "Translation service is not available. Please contact the administrator to install 'googletrans'."
-        )
-        return
-
     try:
         result = translator.translate(english_text, src="en", dest="am")
-        if inspect.isawaitable(result):
-            result = await result
         amharic_text = result.text
 
         reply = (
@@ -106,35 +96,53 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.error("Update %s caused error %s", update, context.error)
 
 
-def main() -> None:
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN environment variable is not set.")
-    if not WEBHOOK_URL:
-        raise RuntimeError(
-            "Set RENDER_EXTERNAL_URL (on Render) or PUBLIC_BASE_URL (for other hosts)."
-        )
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("help", help_command))
+application.add_handler(
+    MessageHandler(filters.TEXT & (~filters.COMMAND), translate_handler)
+)
+application.add_error_handler(error_handler)
 
-    application = Application.builder().token(BOT_TOKEN).build()
+# ----------------- FastAPI app -----------------
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(
-        MessageHandler(filters.TEXT & (~filters.COMMAND), translate_handler)
-    )
-
-    application.add_error_handler(error_handler)
-
-    logger.info("Bot is starting (webhook) on port %s, path /%s",
-                PORT, WEBHOOK_PATH)
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=WEBHOOK_PATH,
-        webhook_url=WEBHOOK_URL,
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,
-    )
+app = FastAPI()
 
 
-if __name__ == "__main__":
-    main()
+@app.on_event("startup")
+async def on_startup():
+    # Delete old webhook, then set the new one
+    logger.info("Starting bot and setting webhook...")
+    await application.bot.delete_webhook(drop_pending_updates=True)
+    await application.bot.set_webhook(url=WEBHOOK_URL)
+    # Start the bot (no polling; only webhook processing)
+    await application.initialize()
+    await application.start()
+    logger.info("Webhook set to %s", WEBHOOK_URL)
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    logger.info("Stopping bot...")
+    await application.stop()
+    await application.shutdown()
+
+
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    """
+    Telegram will POST updates to this endpoint.
+    """
+    try:
+        data = await request.json()
+        update = Update.de_json(data, application.bot)
+        await application.process_update(update)
+    except Exception as e:
+        logger.exception("Error processing update: %s", e)
+        # Return 200 so Telegram does not retry forever
+        return JSONResponse({"ok": False})
+    return JSONResponse({"ok": True})
+
+
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "English-Amharic bot is running."}
