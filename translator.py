@@ -35,6 +35,15 @@ else:
 
 # Read token from environment variable (safer for Render)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+PORT = int(os.getenv("PORT", "10000"))
+WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "telegram")
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL") or RENDER_EXTERNAL_URL
+WEBHOOK_URL = (
+    f"{PUBLIC_BASE_URL.rstrip('/')}/{WEBHOOK_PATH}"
+    if PUBLIC_BASE_URL
+    else None
+)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -100,6 +109,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 def main() -> None:
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable is not set.")
+    if not WEBHOOK_URL:
+        raise RuntimeError(
+            "Set RENDER_EXTERNAL_URL (on Render) or PUBLIC_BASE_URL (for other hosts)."
+        )
 
     application = Application.builder().token(BOT_TOKEN).build()
 
@@ -111,8 +124,16 @@ def main() -> None:
 
     application.add_error_handler(error_handler)
 
-    logger.info("Bot is starting (polling)...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info("Bot is starting (webhook) on port %s, path /%s",
+                PORT, WEBHOOK_PATH)
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=WEBHOOK_PATH,
+        webhook_url=WEBHOOK_URL,
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,
+    )
 
 
 if __name__ == "__main__":
