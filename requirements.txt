@@ -1,6 +1,4 @@
-python-telegram-bot
-googletrans
-python-dotenv
-
-fastapi
-uvicorn[standard]
+flask
+python-telegram-bot==20.7
+deep-translator
+gunicorn

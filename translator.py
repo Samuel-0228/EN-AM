@@ -1,148 +1,56 @@
-import logging
 import os
-
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-
+from flask import Flask, request
 from telegram import Update
-from telegram.ext import (
-    Application,
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
-from googletrans import Translator
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from deep_translator import GoogleTranslator
 
-# ----------------- Logging -----------------
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-logger = logging.getLogger(__name__)
+# Load environment variables
+TOKEN = os.environ.get("BOT_TOKEN")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
-# ----------------- Config -----------------
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # set in Render
-# e.g. https://your-service.onrender.com/webhook
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+app = Flask(__name__)
 
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN environment variable is not set.")
-if not WEBHOOK_URL:
-    raise RuntimeError("WEBHOOK_URL environment variable is not set.")
+# Create Telegram Application
+application = Application.builder().token(TOKEN).build()
 
-translator = Translator()
-
-# ----------------- Telegram Application -----------------
-application: Application = (
-    ApplicationBuilder()
-    .token(BOT_TOKEN)
-    .build()
-)
-
-# ---------- Handlers ----------
+# Translate incoming messages
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = (
-        "Selam 👋\n"
-        "Send me any English text and I will translate it to Amharic.\n\n"
-        "Examples:\n"
-        " - Hello, how are you?\n"
-        " - I live in Addis Ababa."
-    )
-    await update.message.reply_text(text)
+async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message and update.message.text:
+        user_text = update.message.text
+
+        try:
+            translated = GoogleTranslator(
+                source='auto', target='en').translate(user_text)
+            await update.message.reply_text(translated)
+        except Exception as e:
+            await update.message.reply_text("Translation error occurred.")
+
+# Add handler
+application.add_handler(MessageHandler(
+    filters.TEXT & ~filters.COMMAND, translate_message))
 
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = (
-        "I am an English → Amharic translator bot.\n"
-        "Just send English text, and I will reply in Amharic.\n\n"
-        "Commands:\n"
-        " /start  - introduction\n"
-        " /help   - this help message"
-    )
-    await update.message.reply_text(text)
+@app.route("/", methods=["GET"])
+def home():
+    return "Bot is running!"
 
 
-async def translate_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.message.text:
-        return
-
-    english_text = update.message.text.strip()
-
-    if english_text.startswith("/"):
-        return
-
-    try:
-        result = translator.translate(english_text, src="en", dest="am")
-        amharic_text = result.text
-
-        reply = (
-            "✅ Translation:\n\n"
-            f"English:\n{english_text}\n\n"
-            f"Amharic:\n{amharic_text}"
-        )
-        await update.message.reply_text(reply)
-    except Exception as e:
-        logger.exception("Translation error: %s", e)
-        await update.message.reply_text(
-            "Sorry, I could not translate this right now. Please try again."
-        )
+@app.route(f"/{TOKEN}", methods=["POST"])
+async def webhook():
+    data = request.get_json()
+    update = Update.de_json(data, application.bot)
+    await application.process_update(update)
+    return "OK"
 
 
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error("Update %s caused error %s", update, context.error)
+# Set webhook when app starts
+@app.before_first_request
+def setup_webhook():
+    application.bot.set_webhook(f"{WEBHOOK_URL}/{TOKEN}")
 
 
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("help", help_command))
-application.add_handler(
-    MessageHandler(filters.TEXT & (~filters.COMMAND), translate_handler)
-)
-application.add_error_handler(error_handler)
-
-# ----------------- FastAPI app -----------------
-
-app = FastAPI()
-
-
-@app.on_event("startup")
-async def on_startup():
-    # Delete old webhook, then set the new one
-    logger.info("Starting bot and setting webhook...")
-    await application.bot.delete_webhook(drop_pending_updates=True)
-    await application.bot.set_webhook(url=WEBHOOK_URL)
-    # Start the bot (no polling; only webhook processing)
-    await application.initialize()
-    await application.start()
-    logger.info("Webhook set to %s", WEBHOOK_URL)
-
-
-@app.on_event("shutdown")
-async def on_shutdown():
-    logger.info("Stopping bot...")
-    await application.stop()
-    await application.shutdown()
-
-
-@app.post("/webhook")
-async def telegram_webhook(request: Request):
-    """
-    Telegram will POST updates to this endpoint.
-    """
-    try:
-        data = await request.json()
-        update = Update.de_json(data, application.bot)
-        await application.process_update(update)
-    except Exception as e:
-        logger.exception("Error processing update: %s", e)
-        # Return 200 so Telegram does not retry forever
-        return JSONResponse({"ok": False})
-    return JSONResponse({"ok": True})
-
-
-@app.get("/")
-async def root():
-    return {"status": "ok", "message": "English-Amharic bot is running."}
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)

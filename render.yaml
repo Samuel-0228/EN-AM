@@ -1,11 +1,11 @@
 services:
   - type: web
-    name: translator-bot
+    name: telegram-translator-bot
     env: python
-    plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: python3 translator.py
-    autoDeploy: true
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn translator:app"
     envVars:
       - key: BOT_TOKEN
+        sync: false
+      - key: WEBHOOK_URL
         sync: false
